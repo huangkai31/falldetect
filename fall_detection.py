@@ -99,13 +99,13 @@ def main():
     args = parse_args()
     log.info("Start")
 
-    # Plugin initialization for specified device
+    # 插件初始化
     log.info("Initializing plugin for {} device...".format(args.device))
     plugin = IEPlugin(device=args.device, plugin_dirs=args.plugin_dir)
     if args.cpu_extension and 'CPU' in args.device:
         plugin.add_cpu_extension(args.cpu_extension)
 
-    # Load model
+    # 加载模型
     model_xml = os.path.join(
         os.getcwd(),
         "models",
@@ -140,7 +140,7 @@ def main():
     log.info("Loading IR to the plugin...")
     exec_net = plugin.load(network=net, num_requests=2)
 
-    # Read and pre-process input image
+    # 读取视频
     n, c, h, w = net.inputs[input_blob].shape
     del net
     if args.input == 'cam':
@@ -160,11 +160,11 @@ def main():
     cur_request_id = 0
     next_request_id = 1
 
-    # Fall Detection variables
+    # 跌倒参数
     previous_head_avg_position = 0
     previous_head_detection_frame = 0
     last_fall_detected_frame = 0
-    # Fall Detection threshold speed is depedent of the frame height
+    # 阈值
     fall_threshold = 0.04 * height
     framerate_threshold = round(fps/5.0)
     fall_detected_text_position = (20, round(0.15*height))
@@ -174,6 +174,7 @@ def main():
 
     out_file = None
     if args.input != 'cam':
+        # 设置输出文件格式
         out_filename = os.path.splitext(input_stream)[0] + '_output.mp4'
         out_file = cv2.VideoWriter(
             out_filename,
@@ -186,22 +187,23 @@ def main():
         log.info("Evaluating webcam stream...")
 
     while cap.isOpened():
+        # 读取下一帧
         ret, next_frame = cap.read()
         if not ret:
             break
 
-        # Pre-process inputs
+        # 预处理 inputs
         in_frame = cv2.resize(next_frame, (w, h))
         in_frame = in_frame.transpose((2, 0, 1))
         in_frame = in_frame.reshape((n, c, h, w))
 
-        # Inference
+        # 推理
         exec_net.start_async(
             request_id=next_request_id,
             inputs={input_blob: in_frame}
         )
         if exec_net.requests[cur_request_id].wait(-1) == 0:
-            # Parse detection results of the current request
+            # 解析当前请求的检测结果
             res = exec_net.requests[cur_request_id].outputs
             kp_heatmaps = res['Mconv7_stage2_L2']
 
@@ -210,22 +212,22 @@ def main():
             head_elements_y_pos = []
 
             for i in range(POSE_POINTS_NUMBER):
-                # confidence map of corresponding body's part.
+                # 对应身体部位的置信图
                 probMap = kp_heatmaps[0, i, :, :]
 
-                # Find global maxima of the probMap.
+                # 获取最大值 probMap.
                 minVal, prob, minLoc, point = cv2.minMaxLoc(probMap)
 
-                # Scale the point to fit on the original image
+                # 缩放点以适应原始图像
                 x = frame.shape[1] / probMap.shape[1] * point[0]
                 y = frame.shape[0] / probMap.shape[0] * point[1]
 
-                # Add point if the probability is greater than the threshold
+                # 如果prob 大于阈值，加到 head_elements_y_pos
                 if prob > threshold:
                     point = (int(x), int(y))
 
-                    # If point is a component of the head (including neck and
-                    # sholders) append to the header elemnts
+                    
+                    # 如果这个点属于头部，添加到 head_elements_y_pos
                     if (
                         i == 0 or
                         i == 1 or
@@ -242,7 +244,7 @@ def main():
                 else:
                     points.append(None)
 
-            # Draw Skeleton
+            # 绘制人体姿态骨架
             for num, pair in enumerate(POSE_PAIRS):
                 partA = pair[0]
                 partB = pair[1]
@@ -255,14 +257,13 @@ def main():
                         3
                     )
 
-            # Calculate head average position from its components
+            # 计算头部位置
             if(len(head_elements_y_pos) > 0):
                 head_avg_position = sum(head_elements_y_pos)
                 head_avg_position /= len(head_elements_y_pos)
                 # log.info(head_avg_position)
 
-                # Compare previous head position
-                # to detect if falling
+                # 对比头部位置判定是否跌倒
                 if (
                     previous_head_detection_frame and
                     (head_avg_position - previous_head_avg_position) >
@@ -276,8 +277,7 @@ def main():
                 previous_head_avg_position = head_avg_position
                 previous_head_detection_frame = frame_number
 
-            # Draw Fall Detection Text if last fall event
-            # ocurred max 2 seconds ago
+            # 绘制标注文字
             if (
                 last_fall_detected_frame and
                 (frame_number - last_fall_detected_frame) <= 2*fps
@@ -292,7 +292,7 @@ def main():
                     cv2.LINE_AA
                 )
 
-        # If webcam mode
+        # 输出视频文件、显示检测结果
         if out_file:
             out_file.write(frame)
         else:
@@ -301,7 +301,7 @@ def main():
         cur_request_id, next_request_id = next_request_id, cur_request_id
         frame = next_frame
 
-        # Increment frame number
+        # 视频帧+1
         frame_number += 1
 
         key = cv2.waitKey(1)
@@ -309,7 +309,7 @@ def main():
             break
 
     if out_file:
-        # Release the out writer, capture, and destroy any OpenCV windows
+        # 输出标注的视频文件
         out_file.release()
         out_filename = os.path.splitext(input_stream)[0] + '_output.mp4'
         log.info("Finished. %s saved." % (out_filename))
